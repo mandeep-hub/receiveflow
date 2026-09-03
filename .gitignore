@@ -19,3 +19,6 @@ build/
 
 # VS Code local settings
 .vscode/
+
+# Generated Prisma Client
+apps/api/src/generated/prisma/
