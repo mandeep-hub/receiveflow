@@ -29,7 +29,12 @@ app.post("/suppliers", async (req, res) => {
   try {
     const { code, name } = req.body;
 
-    if (typeof code !== "string" || typeof name !== "string") {
+    if (
+      typeof code !== "string" ||
+      typeof name !== "string" ||
+      code.trim() === "" ||
+      name.trim() === ""
+    ) {
       return res.status(400).json({
         error: "Code and name are required",
       });
@@ -43,15 +48,20 @@ app.post("/suppliers", async (req, res) => {
     });
 
     res.status(201).json(supplier);
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
+
+    if (error.code === "P2002") {
+      return res.status(409).json({
+        error: "Supplier code already exists",
+      });
+    }
 
     res.status(500).json({
       error: "Failed to create supplier",
     });
   }
 });
-
 app.get("/suppliers/:id", async (req, res) => {
   const supplier = await prisma.supplier.findUnique({
     where: {
@@ -114,6 +124,116 @@ app.delete("/suppliers/:id", async (req, res) => {
   });
 });
 
+app.get("/products", async (req, res) => {
+  const products = await prisma.product.findMany();
+
+  res.json(products);
+});
+
+app.get("/products/:id", async (req, res) => {
+  const product = await prisma.product.findUnique({
+    where: {
+      id: Number(req.params.id),
+    },
+  });
+
+  if (!product) {
+    return res.status(404).json({
+      error: "Product not found",
+    });
+  }
+
+  res.json(product);
+});
+
+app.post("/products", async (req, res) => {
+  try {
+    const { articleNumber, name } = req.body;
+
+    if (
+      typeof articleNumber !== "string" ||
+      typeof name !== "string" ||
+      articleNumber.trim() === "" ||
+      name.trim() === ""
+    ) {
+      return res.status(400).json({
+        error: "Article number and name are required",
+      });
+    }
+
+    const product = await prisma.product.create({
+      data: {
+        articleNumber: articleNumber.trim(),
+        name: name.trim(),
+      },
+    });
+
+    res.status(201).json(product);
+  } catch (error: any) {
+    console.error(error);
+
+    if (error.code === "P2002") {
+      return res.status(409).json({
+        error: "Article number already exists",
+      });
+    }
+
+    res.status(500).json({
+      error: "Failed to create product",
+    });
+  }
+});
+
+app.put("/products/:id", async (req, res) => {
+  const product = await prisma.product.findUnique({
+    where: {
+      id: Number(req.params.id),
+    },
+  });
+
+  if (!product) {
+    return res.status(404).json({
+      error: "Product not found",
+    });
+  }
+
+  const updatedProduct = await prisma.product.update({
+    where: {
+      id: Number(req.params.id),
+    },
+    data: {
+      name: req.body.name,
+      active: req.body.active,
+    },
+  });
+
+  res.json(updatedProduct);
+});
+
+app.delete("/products/:id", async (req, res) => {
+  const product = await prisma.product.findUnique({
+    where: {
+      id: Number(req.params.id),
+    },
+  });
+
+  if (!product) {
+    return res.status(404).json({
+      error: "Product not found",
+    });
+  }
+
+  const updatedProduct = await prisma.product.update({
+    where: {
+      id: Number(req.params.id),
+    },
+    data: {
+      active: false,
+    },
+  });
+
+  res.json(updatedProduct);
+});
 const PORT = 3000;
 
 app.listen(PORT, () => {

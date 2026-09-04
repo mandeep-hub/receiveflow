@@ -14,4 +14,9 @@ model Supplier {
   active Boolean @default(true)
 }
 
-
+model Product {
+  id            Int     @id @default(autoincrement())
+  articleNumber String  @unique
+  name          String
+  active        Boolean @default(true)
+}
