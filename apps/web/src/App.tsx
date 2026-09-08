@@ -9,6 +9,8 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
+import { ClipboardList, PackageCheck, FileText } from "lucide-react";
+
 function App() {
   return (
     <div className="flex min-h-screen w-full">
@@ -20,15 +22,24 @@ function App() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton>Purchase Orders</SidebarMenuButton>
+                  <SidebarMenuButton>
+                    <ClipboardList />
+                    <span>Purchase Orders</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
 
                 <SidebarMenuItem>
-                  <SidebarMenuButton>Receiving</SidebarMenuButton>
+                  <SidebarMenuButton>
+                    <PackageCheck />
+                    <span>Receiving</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
 
                 <SidebarMenuItem>
-                  <SidebarMenuButton>Reports</SidebarMenuButton>
+                  <SidebarMenuButton>
+                    <FileText />
+                    <span>Reports</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
