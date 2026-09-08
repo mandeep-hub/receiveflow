@@ -7,11 +7,27 @@ datasource db {
   provider = "postgresql"
 }
 
+enum PurchaseOrderStatus {
+  DRAFT
+  OPEN
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchaseOrderSource {
+  MANUAL
+  EXCEL
+  QLIK
+}
+
 model Supplier {
   id     Int     @id @default(autoincrement())
   code   String  @unique
   name   String
   active Boolean @default(true)
+
+  purchaseOrders PurchaseOrder[]
 }
 
 model Product {
@@ -19,4 +35,32 @@ model Product {
   articleNumber String  @unique
   name          String
   active        Boolean @default(true)
+
+  purchaseOrderItems PurchaseOrderItem[]
+}
+
+model PurchaseOrder {
+  id                   Int                 @id @default(autoincrement())
+  poNumber             String              @unique
+  orderDate            DateTime
+  expectedDeliveryDate DateTime?
+  status               PurchaseOrderStatus @default(OPEN)
+  source               PurchaseOrderSource @default(MANUAL)
+  externalReference    String?
+
+  supplierId Int
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+
+  items PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              Int @id @default(autoincrement())
+  quantityOrdered Int
+
+  purchaseOrderId Int
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
 }
