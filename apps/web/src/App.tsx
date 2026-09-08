@@ -1,24 +1,48 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 
 function App() {
   return (
-    <div className="min-h-screen p-8">
-      <h1 className="text-4xl font-bold">ReceiveFlow</h1>
+    <div className="flex min-h-screen w-full">
+      <Sidebar>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>ReceiveFlow</SidebarGroupLabel>
 
-      <Card className="mt-6 max-w-md">
-        <CardHeader>
-          <CardTitle>Purchase Orders</CardTitle>
-        </CardHeader>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton>Purchase Orders</SidebarMenuButton>
+                </SidebarMenuItem>
 
-        <CardContent>
-          <p className="text-muted-foreground">
-            Manage incoming purchase orders.
-          </p>
+                <SidebarMenuItem>
+                  <SidebarMenuButton>Receiving</SidebarMenuButton>
+                </SidebarMenuItem>
 
-          <Button className="mt-4">View Purchase Orders</Button>
-        </CardContent>
-      </Card>
+                <SidebarMenuItem>
+                  <SidebarMenuButton>Reports</SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
+
+      <main className="flex-1 p-8">
+        <h1 className="text-4xl font-bold">ReceiveFlow</h1>
+
+        <p className="mt-2 text-muted-foreground">
+          Warehouse receiving management
+        </p>
+      </main>
     </div>
   );
 }
