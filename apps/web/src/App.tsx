@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/sidebar";
 
 import { ClipboardList, PackageCheck, FileText } from "lucide-react";
+import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage";
 
 function App() {
   return (
@@ -48,11 +49,7 @@ function App() {
       </Sidebar>
 
       <main className="flex-1 p-8">
-        <h1 className="text-4xl font-bold">ReceiveFlow</h1>
-
-        <p className="mt-2 text-muted-foreground">
-          Warehouse receiving management
-        </p>
+        <PurchaseOrdersPage />
       </main>
     </div>
   );
