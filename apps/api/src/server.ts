@@ -699,7 +699,16 @@ app.get("/receivings/:id", async (req, res) => {
       });
     }
 
-    res.json(receiving);
+    const response = {
+      ...receiving,
+      items: receiving.items.map((item) => ({
+        ...item,
+        difference:
+          item.quantityReceived - item.purchaseOrderItem.quantityOrdered,
+      })),
+    };
+
+    res.json(response);
   } catch (error) {
     console.error(error);
 
