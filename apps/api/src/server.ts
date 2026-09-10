@@ -457,8 +457,18 @@ app.get("/purchase-orders/:id", async (req, res) => {
 });
 
 //Receiving endpoint
+const RECEIVING_REASON_CODES = [
+  "MISSING_ITEM",
+  "PARTIAL_DELIVERY",
+  "DAMAGED",
+  "QUALITY_ISSUE",
+  "NO_LABEL",
+  "QUALITY_ISSUE_AFTER_RECEIVING",
+  "OTHER",
+] as const;
 
 //Post the receiving
+
 app.post("/receivings", async (req, res) => {
   try {
     const { purchaseOrderId, items } = req.body;
@@ -516,6 +526,15 @@ app.post("/receivings", async (req, res) => {
       if (!purchaseOrderItem) {
         return res.status(400).json({
           error: "Receiving item does not belong to the purchase order",
+        });
+      }
+      if (
+        item.reasonCode !== undefined &&
+        item.reasonCode !== null &&
+        !RECEIVING_REASON_CODES.includes(item.reasonCode)
+      ) {
+        return res.status(400).json({
+          error: "Invalid reasonCode",
         });
       }
     }
