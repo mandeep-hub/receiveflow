@@ -564,7 +564,15 @@ app.get("/receivings", async (req, res) => {
             },
           },
         },
-        items: true,
+        items: {
+          include: {
+            purchaseOrderItem: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
       },
       orderBy: {
         receivedAt: "desc",
