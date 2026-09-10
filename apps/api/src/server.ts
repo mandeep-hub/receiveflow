@@ -490,6 +490,26 @@ app.post("/receivings", async (req, res) => {
       });
     }
 
+    for (const item of items) {
+      if (
+        !Number.isInteger(item.purchaseOrderItemId) ||
+        item.purchaseOrderItemId <= 0
+      ) {
+        return res.status(400).json({
+          error: "Each item must have a valid purchaseOrderItemId",
+        });
+      }
+
+      if (
+        !Number.isInteger(item.quantityReceived) ||
+        item.quantityReceived <= 0
+      ) {
+        return res.status(400).json({
+          error: "Each item must have a quantityReceived greater than 0",
+        });
+      }
+    }
+
     const receiving = await prisma.receiving.create({
       data: {
         purchaseOrderId,
