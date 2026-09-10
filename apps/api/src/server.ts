@@ -531,6 +531,16 @@ app.post("/receivings", async (req, res) => {
         (poItem) => poItem.id === item.purchaseOrderItemId,
       );
 
+      if (
+        purchaseOrderItem &&
+        item.quantityReceived < purchaseOrderItem.quantityOrdered &&
+        !item.reasonCode
+      ) {
+        return res.status(400).json({
+          error: "reasonCode is required for a partial delivery",
+        });
+      }
+
       if (!purchaseOrderItem) {
         return res.status(400).json({
           error: "Receiving item does not belong to the purchase order",
