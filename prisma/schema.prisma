@@ -51,7 +51,8 @@ model PurchaseOrder {
   supplierId Int
   supplier   Supplier @relation(fields: [supplierId], references: [id])
 
-  items PurchaseOrderItem[]
+  items      PurchaseOrderItem[]
+  receivings Receiving[]
 }
 
 model PurchaseOrderItem {
@@ -61,6 +62,30 @@ model PurchaseOrderItem {
   purchaseOrderId Int
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
 
-  productId Int
-  product   Product @relation(fields: [productId], references: [id])
+  productId      Int
+  product        Product         @relation(fields: [productId], references: [id])
+  receivingItems ReceivingItem[]
+}
+
+model Receiving {
+  id         Int      @id @default(autoincrement())
+  receivedAt DateTime @default(now())
+
+  purchaseOrderId Int
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  items ReceivingItem[]
+}
+
+model ReceivingItem {
+  id               Int     @id @default(autoincrement())
+  quantityReceived Int
+  reasonCode       String?
+  actionStatus     String?
+
+  receivingId Int
+  receiving   Receiving @relation(fields: [receivingId], references: [id], onDelete: Cascade)
+
+  purchaseOrderItemId Int
+  purchaseOrderItem   PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
 }
