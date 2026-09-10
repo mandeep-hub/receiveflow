@@ -508,6 +508,16 @@ app.post("/receivings", async (req, res) => {
           error: "Each item must have a quantityReceived greater than 0",
         });
       }
+
+      const purchaseOrderItem = purchaseOrder.items.find(
+        (poItem) => poItem.id === item.purchaseOrderItemId,
+      );
+
+      if (!purchaseOrderItem) {
+        return res.status(400).json({
+          error: "Receiving item does not belong to the purchase order",
+        });
+      }
     }
 
     const receiving = await prisma.receiving.create({
