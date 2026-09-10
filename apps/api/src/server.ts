@@ -584,7 +584,23 @@ app.post("/receivings", async (req, res) => {
       },
     });
 
-    return res.status(201).json(receiving);
+    const response = {
+      ...receiving,
+      items: receiving.items.map((item) => {
+        const purchaseOrderItem = purchaseOrder.items.find(
+          (poItem) => poItem.id === item.purchaseOrderItemId,
+        );
+
+        return {
+          ...item,
+          difference: purchaseOrderItem
+            ? item.quantityReceived - purchaseOrderItem.quantityOrdered
+            : null,
+        };
+      }),
+    };
+
+    return res.status(201).json(response);
   } catch (error) {
     console.error(error);
 
