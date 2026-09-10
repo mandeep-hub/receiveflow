@@ -589,6 +589,55 @@ app.get("/receivings", async (req, res) => {
   }
 });
 
+//Get a receiving by id
+app.get("/receivings/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        error: "Invalid receiving id",
+      });
+    }
+
+    const receiving = await prisma.receiving.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        purchaseOrder: {
+          include: {
+            supplier: true,
+          },
+        },
+        items: {
+          include: {
+            purchaseOrderItem: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!receiving) {
+      return res.status(404).json({
+        error: "Receiving record not found",
+      });
+    }
+
+    res.json(receiving);
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      error: "Failed to fetch receiving record",
+    });
+  }
+});
+
 const PORT = 3000;
 
 app.listen(PORT, () => {
