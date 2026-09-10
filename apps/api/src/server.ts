@@ -456,6 +456,101 @@ app.get("/purchase-orders/:id", async (req, res) => {
   }
 });
 
+//Receiving endpoint
+
+//Post the receiving
+app.post("/receivings", async (req, res) => {
+  try {
+    const { purchaseOrderId, items } = req.body;
+
+    if (!Number.isInteger(purchaseOrderId) || purchaseOrderId <= 0) {
+      return res.status(400).json({
+        error: "Valid purchaseOrderId is required",
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        error: "At least one receiving item is required",
+      });
+    }
+
+    const purchaseOrder = await prisma.purchaseOrder.findUnique({
+      where: {
+        id: purchaseOrderId,
+      },
+      include: {
+        items: true,
+      },
+    });
+
+    if (!purchaseOrder) {
+      return res.status(404).json({
+        error: "Purchase order not found",
+      });
+    }
+
+    const receiving = await prisma.receiving.create({
+      data: {
+        purchaseOrderId,
+        items: {
+          create: items.map((item: any) => ({
+            purchaseOrderItemId: item.purchaseOrderItemId,
+            quantityReceived: item.quantityReceived,
+            reasonCode: item.reasonCode ?? null,
+            actionStatus: item.actionStatus ?? null,
+          })),
+        },
+      },
+      include: {
+        purchaseOrder: true,
+        items: true,
+      },
+    });
+
+    return res.status(201).json(receiving);
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to create receiving record",
+    });
+  }
+});
+
+// Get receiving records
+
+app.get("/receivings", async (req, res) => {
+  try {
+    const receivings = await prisma.receiving.findMany({
+      include: {
+        purchaseOrder: {
+          include: {
+            supplier: true,
+            items: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+        items: true,
+      },
+      orderBy: {
+        receivedAt: "desc",
+      },
+    });
+
+    res.json(receivings);
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      error: "Failed to fetch receiving records",
+    });
+  }
+});
+
 const PORT = 3000;
 
 app.listen(PORT, () => {
