@@ -467,6 +467,14 @@ const RECEIVING_REASON_CODES = [
   "OTHER",
 ] as const;
 
+const RECEIVING_ACTION_STATUSES = [
+  "FOLLOW_UP",
+  "CREDIT_REQUEST",
+  "REPLACEMENT_REQUEST",
+  "RETURNED_TO_SUPPLIER",
+  "NO_ACTION",
+] as const;
+
 //Post the receiving
 
 app.post("/receivings", async (req, res) => {
@@ -535,6 +543,15 @@ app.post("/receivings", async (req, res) => {
       ) {
         return res.status(400).json({
           error: "Invalid reasonCode",
+        });
+      }
+      if (
+        item.actionStatus !== undefined &&
+        item.actionStatus !== null &&
+        !RECEIVING_ACTION_STATUSES.includes(item.actionStatus)
+      ) {
+        return res.status(400).json({
+          error: "Invalid actionStatus",
         });
       }
     }
