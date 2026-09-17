@@ -479,11 +479,17 @@ const RECEIVING_ACTION_STATUSES = [
 
 app.post("/receivings", async (req, res) => {
   try {
-    const { purchaseOrderId, items } = req.body;
+    const { purchaseOrderId, epCount, items } = req.body;
 
     if (!Number.isInteger(purchaseOrderId) || purchaseOrderId <= 0) {
       return res.status(400).json({
         error: "Valid purchaseOrderId is required",
+      });
+    }
+
+    if (!Number.isInteger(epCount) || epCount < 0) {
+      return res.status(400).json({
+        error: "Valid epCount is required",
       });
     }
 
@@ -569,6 +575,7 @@ app.post("/receivings", async (req, res) => {
     const receiving = await prisma.receiving.create({
       data: {
         purchaseOrderId,
+        epCount,
         items: {
           create: items.map((item: any) => ({
             purchaseOrderItemId: item.purchaseOrderItemId,

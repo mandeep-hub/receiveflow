@@ -24,6 +24,7 @@ export type ReceivingItem = {
 export type Receiving = {
   id: number;
   purchaseOrderId: number;
+  epCount: number;
   receivedAt: string;
   items: ReceivingItem[];
 };

@@ -71,6 +71,7 @@ model Receiving {
   id         Int      @id @default(autoincrement())
   receivedAt DateTime @default(now())
 
+  epCount         Int
   purchaseOrderId Int
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
 
