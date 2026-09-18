@@ -825,6 +825,151 @@ app.get("/receivings", async (req, res) => {
   }
 });
 
+// Get end-of-day receiving report
+app.get("/receivings/report", async (req, res) => {
+  try {
+    const date = String(req.query.date ?? "");
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({
+        error: "Valid date is required in YYYY-MM-DD format",
+      });
+    }
+
+    const startDate = new Date(`${date}T00:00:00.000Z`);
+    const endDate = new Date(`${date}T23:59:59.999Z`);
+
+    const receivings = await prisma.receiving.findMany({
+      where: {
+        receivedAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+      include: {
+        purchaseOrder: {
+          include: {
+            supplier: true,
+          },
+        },
+        items: {
+          include: {
+            purchaseOrderItem: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        receivedAt: "asc",
+      },
+    });
+
+    const allPreviousReceivings = await prisma.receiving.findMany({
+      where: {
+        receivedAt: {
+          lt: startDate,
+        },
+      },
+      include: {
+        items: true,
+      },
+    });
+
+    const previousReceivedByItem = new Map<number, number>();
+
+    for (const receiving of allPreviousReceivings) {
+      for (const item of receiving.items) {
+        const currentQuantity =
+          previousReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+
+        previousReceivedByItem.set(
+          item.purchaseOrderItemId,
+          currentQuantity + item.quantityReceived,
+        );
+      }
+    }
+
+    const reportRows = receivings.flatMap((receiving) =>
+      receiving.items.map((item) => {
+        const quantityOrdered = item.purchaseOrderItem.quantityOrdered;
+
+        const previouslyReceived =
+          previousReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+
+        const remainingQuantity = Math.max(
+          quantityOrdered - previouslyReceived,
+          0,
+        );
+
+        const difference = item.quantityReceived - remainingQuantity;
+
+        const totalReceived = previouslyReceived + item.quantityReceived;
+
+        previousReceivedByItem.set(item.purchaseOrderItemId, totalReceived);
+
+        return {
+          receivingId: receiving.id,
+          receivedAt: receiving.receivedAt,
+          purchaseOrderId: receiving.purchaseOrderId,
+          poNumber: receiving.purchaseOrder.poNumber,
+          supplier: receiving.purchaseOrder.supplier.name,
+          purchaseOrderItemId: item.purchaseOrderItemId,
+          articleNumber: item.purchaseOrderItem.product.articleNumber,
+          product: item.purchaseOrderItem.product.name,
+          quantityOrdered,
+          previouslyReceived,
+          quantityReceived: item.quantityReceived,
+          remainingQuantity,
+          difference,
+          reasonCode: item.reasonCode,
+          actionStatus: item.actionStatus,
+          epCount: receiving.epCount,
+        };
+      }),
+    );
+    const totalPurchaseOrders = new Set(
+      reportRows.map((row) => row.purchaseOrderId),
+    ).size;
+
+    const totalItems = reportRows.length;
+
+    const totalDelivered = reportRows.reduce(
+      (total, row) => total + row.quantityReceived,
+      0,
+    );
+
+    const totalEpKasser = receivings.reduce(
+      (total, receiving) => total + receiving.epCount,
+      0,
+    );
+
+    const totalDiscrepancies = reportRows.filter(
+      (row) => row.difference !== 0,
+    ).length;
+
+    return res.status(200).json({
+      date,
+      summary: {
+        totalPurchaseOrders,
+        totalItems,
+        totalDelivered,
+        totalEpKasser,
+        totalDiscrepancies,
+      },
+      rows: reportRows,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to generate end-of-day receiving report",
+    });
+  }
+});
+
 //Get a receiving by id
 app.get("/receivings/:id", async (req, res) => {
   try {

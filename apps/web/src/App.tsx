@@ -5,6 +5,7 @@ import { ClipboardList, PackageCheck, FileText, Menu, X } from "lucide-react";
 import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage";
 import PurchaseOrderDetailsPage from "@/pages/PurchaseOrderDetailsPage";
 import ReceivingPage from "@/pages/ReceivingPage";
+import ReportPage from "@/pages/ReportPage";
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -69,6 +70,7 @@ function App() {
             />
 
             <Route path="/receiving" element={<ReceivingPage />} />
+            <Route path="/reports" element={<ReportPage />} />
           </Routes>
         </main>
       </div>
@@ -110,7 +112,7 @@ function NavigationMenu({ closeMenu }: NavigationMenuProps) {
 
       <button
         type="button"
-        onClick={closeMenu}
+        onClick={() => goTo("/reports")}
         className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium hover:bg-muted"
       >
         <FileText className="h-5 w-5" />
