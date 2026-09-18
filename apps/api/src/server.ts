@@ -475,6 +475,71 @@ const RECEIVING_ACTION_STATUSES = [
   "NO_ACTION",
 ] as const;
 
+async function updatePurchaseOrderStatus(purchaseOrderId: number) {
+  const purchaseOrder = await prisma.purchaseOrder.findUnique({
+    where: {
+      id: purchaseOrderId,
+    },
+    include: {
+      items: true,
+    },
+  });
+
+  if (!purchaseOrder) {
+    return;
+  }
+
+  const receivings = await prisma.receiving.findMany({
+    where: {
+      purchaseOrderId,
+    },
+    include: {
+      items: true,
+    },
+  });
+
+  const totalReceivedByItem = new Map<number, number>();
+
+  for (const receiving of receivings) {
+    for (const receivingItem of receiving.items) {
+      const currentQuantity =
+        totalReceivedByItem.get(receivingItem.purchaseOrderItemId) ?? 0;
+
+      totalReceivedByItem.set(
+        receivingItem.purchaseOrderItemId,
+        currentQuantity + receivingItem.quantityReceived,
+      );
+    }
+  }
+
+  const allItemsReceived = purchaseOrder.items.every((purchaseOrderItem) => {
+    const totalReceived = totalReceivedByItem.get(purchaseOrderItem.id) ?? 0;
+
+    return totalReceived >= purchaseOrderItem.quantityOrdered;
+  });
+
+  const anyItemReceived = purchaseOrder.items.some((purchaseOrderItem) => {
+    const totalReceived = totalReceivedByItem.get(purchaseOrderItem.id) ?? 0;
+
+    return totalReceived > 0;
+  });
+
+  const newStatus = allItemsReceived
+    ? "RECEIVED"
+    : anyItemReceived
+      ? "PARTIALLY_RECEIVED"
+      : "OPEN";
+
+  await prisma.purchaseOrder.update({
+    where: {
+      id: purchaseOrderId,
+    },
+    data: {
+      status: newStatus,
+    },
+  });
+}
+
 //Post the receiving
 
 app.post("/receivings", async (req, res) => {
@@ -514,6 +579,32 @@ app.post("/receivings", async (req, res) => {
       });
     }
 
+    // Get all previous receiving records for this purchase order.
+    const previousReceivings = await prisma.receiving.findMany({
+      where: {
+        purchaseOrderId,
+      },
+      include: {
+        items: true,
+      },
+    });
+
+    // Calculate the total quantity previously received for each PO item.
+    const previouslyReceivedByItem = new Map<number, number>();
+
+    for (const receiving of previousReceivings) {
+      for (const receivingItem of receiving.items) {
+        const currentQuantity =
+          previouslyReceivedByItem.get(receivingItem.purchaseOrderItemId) ?? 0;
+
+        previouslyReceivedByItem.set(
+          receivingItem.purchaseOrderItemId,
+          currentQuantity + receivingItem.quantityReceived,
+        );
+      }
+    }
+
+    // Validate each receiving item.
     for (const item of items) {
       if (
         !Number.isInteger(item.purchaseOrderItemId) ||
@@ -537,21 +628,33 @@ app.post("/receivings", async (req, res) => {
         (poItem) => poItem.id === item.purchaseOrderItemId,
       );
 
-      if (
-        purchaseOrderItem &&
-        item.quantityReceived < purchaseOrderItem.quantityOrdered &&
-        !item.reasonCode
-      ) {
-        return res.status(400).json({
-          error: "reasonCode is required for a partial delivery",
-        });
-      }
-
       if (!purchaseOrderItem) {
         return res.status(400).json({
           error: "Receiving item does not belong to the purchase order",
         });
       }
+
+      const previouslyReceived =
+        previouslyReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+
+      const remainingQuantity =
+        purchaseOrderItem.quantityOrdered - previouslyReceived;
+
+      // Do not allow receiving more than the remaining quantity.
+      if (item.quantityReceived > remainingQuantity) {
+        return res.status(400).json({
+          error: `Quantity received exceeds the remaining quantity for purchase order item ${item.purchaseOrderItemId}`,
+        });
+      }
+
+      // A delivery is partial when it is less than the quantity
+      // still remaining on the purchase order item.
+      if (item.quantityReceived < remainingQuantity && !item.reasonCode) {
+        return res.status(400).json({
+          error: "reasonCode is required for a partial delivery",
+        });
+      }
+
       if (
         item.reasonCode !== undefined &&
         item.reasonCode !== null &&
@@ -561,6 +664,7 @@ app.post("/receivings", async (req, res) => {
           error: "Invalid reasonCode",
         });
       }
+
       if (
         item.actionStatus !== undefined &&
         item.actionStatus !== null &&
@@ -598,14 +702,26 @@ app.post("/receivings", async (req, res) => {
           (poItem) => poItem.id === item.purchaseOrderItemId,
         );
 
+        const previouslyReceived =
+          previouslyReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+
+        const totalReceived = previouslyReceived + item.quantityReceived;
+
         return {
           ...item,
+          totalReceived,
+          remainingQuantity: purchaseOrderItem
+            ? purchaseOrderItem.quantityOrdered - totalReceived
+            : null,
           difference: purchaseOrderItem
-            ? item.quantityReceived - purchaseOrderItem.quantityOrdered
+            ? totalReceived - purchaseOrderItem.quantityOrdered
             : null,
         };
       }),
     };
+
+    // ADD IT HERE
+    await updatePurchaseOrderStatus(purchaseOrderId);
 
     return res.status(201).json(response);
   } catch (error) {
@@ -613,6 +729,48 @@ app.post("/receivings", async (req, res) => {
 
     return res.status(500).json({
       error: "Failed to create receiving record",
+    });
+  }
+});
+app.post("/purchase-orders/:id/recalculate-status", async (req, res) => {
+  try {
+    const purchaseOrderId = Number(req.params.id);
+
+    if (!Number.isInteger(purchaseOrderId) || purchaseOrderId <= 0) {
+      return res.status(400).json({
+        error: "Valid purchase order id is required",
+      });
+    }
+
+    const purchaseOrder = await prisma.purchaseOrder.findUnique({
+      where: {
+        id: purchaseOrderId,
+      },
+    });
+
+    if (!purchaseOrder) {
+      return res.status(404).json({
+        error: "Purchase order not found",
+      });
+    }
+
+    await updatePurchaseOrderStatus(purchaseOrderId);
+
+    const updatedPurchaseOrder = await prisma.purchaseOrder.findUnique({
+      where: {
+        id: purchaseOrderId,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Purchase order status recalculated",
+      status: updatedPurchaseOrder?.status,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to recalculate purchase order status",
     });
   }
 });
