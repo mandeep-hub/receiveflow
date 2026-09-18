@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { createReceiving } from "@/api/receivings";
 import type { PurchaseOrder } from "@/types/purchaseOrder";
 
 type ReceivingItemRow = {
@@ -44,6 +45,7 @@ function ReceivingPage() {
   const [error, setError] = useState("");
 
   const [searchPo, setSearchPo] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const [entryMode, setEntryMode] = useState<"manual" | "import">("manual");
 
@@ -171,22 +173,22 @@ function ReceivingPage() {
   }
 
   // Validate before saving
-  function handleSaveReceiving() {
+  async function handleSaveReceiving() {
+    if (saving) {
+      return;
+    }
+
     const invalidItems = filteredReceivingItems.filter((item) => {
       const difference = getDifference(item);
 
-      // Delivered has not been entered yet.
       if (difference === null) {
         return false;
       }
 
-      // Only a negative difference requires
-      // Reason Code and Action Required.
       if (difference < 0) {
         return !item.reasonCode || !item.actionStatus;
       }
 
-      // Zero and positive differences are optional.
       return false;
     });
 
@@ -197,11 +199,60 @@ function ReceivingPage() {
       return;
     }
 
-    // API connection will be added later.
-    console.log("Receiving items:", filteredReceivingItems);
-    console.log("EP Kasser:", epCounts);
-  }
+    const itemsWithDeliveredQuantity = filteredReceivingItems.filter(
+      (item) => item.quantityReceived !== null,
+    );
 
+    if (itemsWithDeliveredQuantity.length === 0) {
+      alert("Please enter at least one delivered quantity.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const purchaseOrderIds = [
+        ...new Set(
+          itemsWithDeliveredQuantity.map((item) => item.purchaseOrderId),
+        ),
+      ];
+
+      for (const purchaseOrderId of purchaseOrderIds) {
+        const poItems = itemsWithDeliveredQuantity.filter(
+          (item) => item.purchaseOrderId === purchaseOrderId,
+        );
+
+        const epCount = epCounts[purchaseOrderId] ?? 0;
+
+        await createReceiving({
+          purchaseOrderId,
+          epCount,
+          items: poItems.map((item) => ({
+            purchaseOrderItemId: item.id,
+            quantityReceived: item.quantityReceived!,
+            reasonCode: item.reasonCode || null,
+            actionStatus: item.actionStatus || null,
+          })),
+        });
+      }
+
+      alert("Receiving saved successfully.");
+      setReceivingItems((current) =>
+        current.map((item) => ({
+          ...item,
+          quantityReceived: null,
+          reasonCode: "",
+          actionStatus: "",
+        })),
+      );
+
+      setEpCounts({});
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save receiving.");
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <div>
       {/* Loading */}
@@ -572,9 +623,9 @@ function ReceivingPage() {
                 <Button
                   type="button"
                   onClick={handleSaveReceiving}
-                  disabled={filteredReceivingItems.length === 0}
+                  disabled={filteredReceivingItems.length === 0 || saving}
                 >
-                  Save Receiving
+                  {saving ? "Saving..." : "Save Receiving"}
                 </Button>
               </div>
             </div>
