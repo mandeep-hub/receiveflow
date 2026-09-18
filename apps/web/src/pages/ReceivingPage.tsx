@@ -11,9 +11,18 @@ type ReceivingItemRow = {
   articleNumber: string;
   productName: string;
   quantityOrdered: number;
+  previouslyReceived: number;
   quantityReceived: number | null;
   reasonCode: string;
   actionStatus: string;
+};
+
+type ReceivingHistory = {
+  purchaseOrderId: number;
+  items: {
+    purchaseOrderItemId: number;
+    quantityReceived: number;
+  }[];
 };
 
 const reasonCodes = [
@@ -55,22 +64,49 @@ function ReceivingPage() {
 
   const [receivingItems, setReceivingItems] = useState<ReceivingItemRow[]>([]);
 
-  // Fetch all available purchase orders
+  // Total quantity already received for each PO item.
+  const [previousReceivedByItem, setPreviousReceivedByItem] = useState<
+    Record<number, number>
+  >({});
+
+  // Fetch all purchase orders and receiving history.
   useEffect(() => {
     async function fetchPurchaseOrders() {
       try {
         setLoading(true);
         setError("");
 
-        const response = await fetch("http://localhost:3000/purchase-orders");
+        const [purchaseOrdersResponse, receivingsResponse] = await Promise.all([
+          fetch("http://localhost:3000/purchase-orders"),
+          fetch("http://localhost:3000/receivings"),
+        ]);
 
-        if (!response.ok) {
+        if (!purchaseOrdersResponse.ok) {
           throw new Error("Failed to fetch purchase orders");
         }
 
-        const data: PurchaseOrder[] = await response.json();
+        if (!receivingsResponse.ok) {
+          throw new Error("Failed to fetch receiving history");
+        }
 
-        setPurchaseOrders(data);
+        const purchaseOrdersData: PurchaseOrder[] =
+          await purchaseOrdersResponse.json();
+
+        const receivingsData: ReceivingHistory[] =
+          await receivingsResponse.json();
+
+        const previousReceived: Record<number, number> = {};
+
+        for (const receiving of receivingsData) {
+          for (const item of receiving.items) {
+            previousReceived[item.purchaseOrderItemId] =
+              (previousReceived[item.purchaseOrderItemId] ?? 0) +
+              item.quantityReceived;
+          }
+        }
+
+        setPurchaseOrders(purchaseOrdersData);
+        setPreviousReceivedByItem(previousReceived);
       } catch (err) {
         setError(
           err instanceof Error
@@ -85,27 +121,35 @@ function ReceivingPage() {
     fetchPurchaseOrders();
   }, []);
 
-  // Create receiving rows from all PO items
+  // Create receiving rows from all available PO items.
   useEffect(() => {
-    const rows: ReceivingItemRow[] = purchaseOrders.flatMap((purchaseOrder) =>
-      purchaseOrder.items.map((item) => ({
-        id: item.id,
-        purchaseOrderId: purchaseOrder.id,
-        poNumber: purchaseOrder.poNumber,
-        supplierName: purchaseOrder.supplier.name,
-        articleNumber: item.product.articleNumber,
-        productName: item.product.name,
-        quantityOrdered: item.quantityOrdered,
-        quantityReceived: null,
-        reasonCode: "",
-        actionStatus: "",
-      })),
+    const availablePurchaseOrders = purchaseOrders.filter(
+      (purchaseOrder) =>
+        purchaseOrder.status === "OPEN" ||
+        purchaseOrder.status === "PARTIALLY_RECEIVED",
+    );
+
+    const rows: ReceivingItemRow[] = availablePurchaseOrders.flatMap(
+      (purchaseOrder) =>
+        purchaseOrder.items.map((item) => ({
+          id: item.id,
+          purchaseOrderId: purchaseOrder.id,
+          poNumber: purchaseOrder.poNumber,
+          supplierName: purchaseOrder.supplier.name,
+          articleNumber: item.product.articleNumber,
+          productName: item.product.name,
+          quantityOrdered: item.quantityOrdered,
+          previouslyReceived: previousReceivedByItem[item.id] ?? 0,
+          quantityReceived: null,
+          reasonCode: "",
+          actionStatus: "",
+        })),
     );
 
     setReceivingItems(rows);
-  }, [purchaseOrders]);
+  }, [purchaseOrders, previousReceivedByItem]);
 
-  // Filter rows based on PO search
+  // Filter rows based on PO search.
   const filteredReceivingItems = useMemo(() => {
     const search = searchPo.trim().toLowerCase();
 
@@ -118,12 +162,12 @@ function ReceivingPage() {
     );
   }, [receivingItems, searchPo]);
 
-  // Check whether at least one delivered quantity has been entered
+  // Check whether at least one delivered quantity has been entered.
   const hasDeliveredQuantity = filteredReceivingItems.some(
     (item) => item.quantityReceived !== null,
   );
 
-  // Calculate totals
+  // Calculate totals.
   const totalOrdered = filteredReceivingItems.reduce(
     (total, item) => total + item.quantityOrdered,
     0,
@@ -136,7 +180,7 @@ function ReceivingPage() {
 
   const totalDifference = totalDelivered - totalOrdered;
 
-  // Update delivered quantity / reason / action
+  // Update delivered quantity / reason / action.
   function updateItem(
     itemId: number,
     field: keyof ReceivingItemRow,
@@ -154,7 +198,7 @@ function ReceivingPage() {
     );
   }
 
-  // Update EP Kasser for a PO
+  // Update EP Kasser for a PO.
   function updateEpCount(purchaseOrderId: number, value: string) {
     const numericValue = value.trim() === "" ? null : Number(value);
 
@@ -164,15 +208,21 @@ function ReceivingPage() {
     }));
   }
 
+  function getRemainingQuantity(item: ReceivingItemRow) {
+    return Math.max(item.quantityOrdered - item.previouslyReceived, 0);
+  }
+
   function getDifference(item: ReceivingItemRow) {
     if (item.quantityReceived === null) {
       return null;
     }
 
-    return item.quantityReceived - item.quantityOrdered;
+    const remainingQuantity = getRemainingQuantity(item);
+
+    return item.quantityReceived - remainingQuantity;
   }
 
-  // Validate before saving
+  // Validate before saving.
   async function handleSaveReceiving() {
     if (saving) {
       return;
@@ -237,6 +287,7 @@ function ReceivingPage() {
       }
 
       alert("Receiving saved successfully.");
+
       setReceivingItems((current) =>
         current.map((item) => ({
           ...item,
@@ -253,6 +304,7 @@ function ReceivingPage() {
       setSaving(false);
     }
   }
+
   return (
     <div>
       {/* Loading */}
@@ -322,7 +374,14 @@ function ReceivingPage() {
               <div className="rounded-lg border bg-background">
                 {/* Table Header */}
                 <div className="flex items-center justify-between border-b p-4">
-                  <h2 className="text-lg font-semibold">All Available POs</h2>
+                  <div>
+                    <h2 className="text-lg font-semibold">All Available POs</h2>
+
+                    <p className="text-sm text-muted-foreground">
+                      Only open and partially received purchase orders are
+                      shown.
+                    </p>
+                  </div>
 
                   <span className="text-sm text-muted-foreground">
                     Showing {filteredReceivingItems.length} of{" "}
@@ -332,9 +391,28 @@ function ReceivingPage() {
 
                 {filteredReceivingItems.length === 0 ? (
                   <div className="p-12 text-center">
-                    <p className="text-muted-foreground">
-                      No matching purchase order found.
-                    </p>
+                    {receivingItems.length === 0 ? (
+                      <>
+                        <p className="font-medium">
+                          No purchase orders available for receiving.
+                        </p>
+
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          All current purchase orders have been fully received
+                          or are not ready for receiving.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-medium">
+                          No matching purchase order found.
+                        </p>
+
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Try searching with a different PO number.
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
