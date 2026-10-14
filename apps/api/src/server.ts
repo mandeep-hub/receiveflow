@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import prisma from "./lib/prisma.js";
+import type { Prisma } from "./generated/prisma/client.js";
 const app = express();
 
 app.use(cors());
@@ -475,8 +476,40 @@ const RECEIVING_ACTION_STATUSES = [
   "NO_ACTION",
 ] as const;
 
-async function updatePurchaseOrderStatus(purchaseOrderId: number) {
-  const purchaseOrder = await prisma.purchaseOrder.findUnique({
+const RECEIVABLE_PURCHASE_ORDER_STATUSES = ["OPEN", "PARTIALLY_RECEIVED"];
+
+// Set deliberately; received quantities must not override them.
+const FIXED_PURCHASE_ORDER_STATUSES = ["DRAFT", "CANCELLED"];
+
+// Thrown inside a transaction to roll it back and return an HTTP error.
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Locks the PO row until the transaction ends, so receivings and status
+// recalculations for the same PO run one at a time. Returns false if the
+// PO does not exist.
+async function lockPurchaseOrder(
+  db: Prisma.TransactionClient,
+  purchaseOrderId: number,
+) {
+  const lockedRows = await db.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "PurchaseOrder" WHERE id = ${purchaseOrderId} FOR UPDATE
+  `;
+
+  return lockedRows.length > 0;
+}
+
+async function updatePurchaseOrderStatus(
+  db: Prisma.TransactionClient,
+  purchaseOrderId: number,
+) {
+  const purchaseOrder = await db.purchaseOrder.findUnique({
     where: {
       id: purchaseOrderId,
     },
@@ -489,7 +522,11 @@ async function updatePurchaseOrderStatus(purchaseOrderId: number) {
     return;
   }
 
-  const receivings = await prisma.receiving.findMany({
+  if (FIXED_PURCHASE_ORDER_STATUSES.includes(purchaseOrder.status)) {
+    return;
+  }
+
+  const receivings = await db.receiving.findMany({
     where: {
       purchaseOrderId,
     },
@@ -530,7 +567,7 @@ async function updatePurchaseOrderStatus(purchaseOrderId: number) {
       ? "PARTIALLY_RECEIVED"
       : "OPEN";
 
-  await prisma.purchaseOrder.update({
+  await db.purchaseOrder.update({
     where: {
       id: purchaseOrderId,
     },
@@ -564,136 +601,179 @@ app.post("/receivings", async (req, res) => {
       });
     }
 
-    const purchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: {
-        id: purchaseOrderId,
-      },
-      include: {
-        items: true,
-      },
-    });
+    // Validate, create the receiving and update the PO status atomically.
+    const { receiving, purchaseOrder, previouslyReceivedByItem } =
+      await prisma.$transaction(
+        async (tx) => {
+          // Lock the PO row so concurrent receivings for the same PO run
+          // one at a time and always see each other's committed quantities.
+          if (!(await lockPurchaseOrder(tx, purchaseOrderId))) {
+            throw new HttpError(404, "Purchase order not found");
+          }
 
-    if (!purchaseOrder) {
-      return res.status(404).json({
-        error: "Purchase order not found",
-      });
-    }
+          const purchaseOrder = await tx.purchaseOrder.findUnique({
+            where: {
+              id: purchaseOrderId,
+            },
+            include: {
+              items: true,
+            },
+          });
 
-    // Get all previous receiving records for this purchase order.
-    const previousReceivings = await prisma.receiving.findMany({
-      where: {
-        purchaseOrderId,
-      },
-      include: {
-        items: true,
-      },
-    });
+          if (!purchaseOrder) {
+            throw new HttpError(404, "Purchase order not found");
+          }
 
-    // Calculate the total quantity previously received for each PO item.
-    const previouslyReceivedByItem = new Map<number, number>();
+          if (
+            !RECEIVABLE_PURCHASE_ORDER_STATUSES.includes(purchaseOrder.status)
+          ) {
+            throw new HttpError(
+              409,
+              `Purchase order is not open for receiving (status: ${purchaseOrder.status})`,
+            );
+          }
 
-    for (const receiving of previousReceivings) {
-      for (const receivingItem of receiving.items) {
-        const currentQuantity =
-          previouslyReceivedByItem.get(receivingItem.purchaseOrderItemId) ?? 0;
+          // Get all previous receiving records for this purchase order.
+          const previousReceivings = await tx.receiving.findMany({
+            where: {
+              purchaseOrderId,
+            },
+            include: {
+              items: true,
+            },
+          });
 
-        previouslyReceivedByItem.set(
-          receivingItem.purchaseOrderItemId,
-          currentQuantity + receivingItem.quantityReceived,
-        );
-      }
-    }
+          // Calculate the total quantity previously received for each PO item.
+          const previouslyReceivedByItem = new Map<number, number>();
 
-    // Validate each receiving item.
-    for (const item of items) {
-      if (
-        !Number.isInteger(item.purchaseOrderItemId) ||
-        item.purchaseOrderItemId <= 0
-      ) {
-        return res.status(400).json({
-          error: "Each item must have a valid purchaseOrderItemId",
-        });
-      }
+          for (const receiving of previousReceivings) {
+            for (const receivingItem of receiving.items) {
+              const currentQuantity =
+                previouslyReceivedByItem.get(
+                  receivingItem.purchaseOrderItemId,
+                ) ?? 0;
 
-      if (
-        !Number.isInteger(item.quantityReceived) ||
-        item.quantityReceived <= 0
-      ) {
-        return res.status(400).json({
-          error: "Each item must have a quantityReceived greater than 0",
-        });
-      }
+              previouslyReceivedByItem.set(
+                receivingItem.purchaseOrderItemId,
+                currentQuantity + receivingItem.quantityReceived,
+              );
+            }
+          }
 
-      const purchaseOrderItem = purchaseOrder.items.find(
-        (poItem) => poItem.id === item.purchaseOrderItemId,
-      );
+          const seenPurchaseOrderItemIds = new Set<number>();
 
-      if (!purchaseOrderItem) {
-        return res.status(400).json({
-          error: "Receiving item does not belong to the purchase order",
-        });
-      }
+          // Validate each receiving item.
+          for (const item of items) {
+            if (
+              !Number.isInteger(item.purchaseOrderItemId) ||
+              item.purchaseOrderItemId <= 0
+            ) {
+              throw new HttpError(
+                400,
+                "Each item must have a valid purchaseOrderItemId",
+              );
+            }
 
-      const previouslyReceived =
-        previouslyReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+            // Each PO item may appear only once, otherwise the remaining
+            // quantity check below would be bypassed.
+            if (seenPurchaseOrderItemIds.has(item.purchaseOrderItemId)) {
+              throw new HttpError(
+                400,
+                `Duplicate purchaseOrderItemId ${item.purchaseOrderItemId} in request`,
+              );
+            }
 
-      const remainingQuantity =
-        purchaseOrderItem.quantityOrdered - previouslyReceived;
+            seenPurchaseOrderItemIds.add(item.purchaseOrderItemId);
 
-      // Do not allow receiving more than the remaining quantity.
-      if (item.quantityReceived > remainingQuantity) {
-        return res.status(400).json({
-          error: `Quantity received exceeds the remaining quantity for purchase order item ${item.purchaseOrderItemId}`,
-        });
-      }
+            if (
+              !Number.isInteger(item.quantityReceived) ||
+              item.quantityReceived <= 0
+            ) {
+              throw new HttpError(
+                400,
+                "Each item must have a quantityReceived greater than 0",
+              );
+            }
 
-      // A delivery is partial when it is less than the quantity
-      // still remaining on the purchase order item.
-      if (item.quantityReceived < remainingQuantity && !item.reasonCode) {
-        return res.status(400).json({
-          error: "reasonCode is required for a partial delivery",
-        });
-      }
+            const purchaseOrderItem = purchaseOrder.items.find(
+              (poItem) => poItem.id === item.purchaseOrderItemId,
+            );
 
-      if (
-        item.reasonCode !== undefined &&
-        item.reasonCode !== null &&
-        !RECEIVING_REASON_CODES.includes(item.reasonCode)
-      ) {
-        return res.status(400).json({
-          error: "Invalid reasonCode",
-        });
-      }
+            if (!purchaseOrderItem) {
+              throw new HttpError(
+                400,
+                "Receiving item does not belong to the purchase order",
+              );
+            }
 
-      if (
-        item.actionStatus !== undefined &&
-        item.actionStatus !== null &&
-        !RECEIVING_ACTION_STATUSES.includes(item.actionStatus)
-      ) {
-        return res.status(400).json({
-          error: "Invalid actionStatus",
-        });
-      }
-    }
+            const previouslyReceived =
+              previouslyReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
 
-    const receiving = await prisma.receiving.create({
-      data: {
-        purchaseOrderId,
-        epCount,
-        items: {
-          create: items.map((item: any) => ({
-            purchaseOrderItemId: item.purchaseOrderItemId,
-            quantityReceived: item.quantityReceived,
-            reasonCode: item.reasonCode ?? null,
-            actionStatus: item.actionStatus ?? null,
-          })),
+            const remainingQuantity =
+              purchaseOrderItem.quantityOrdered - previouslyReceived;
+
+            // Do not allow receiving more than the remaining quantity.
+            if (item.quantityReceived > remainingQuantity) {
+              throw new HttpError(
+                400,
+                `Quantity received exceeds the remaining quantity for purchase order item ${item.purchaseOrderItemId}`,
+              );
+            }
+
+            // A delivery is partial when it is less than the quantity
+            // still remaining on the purchase order item.
+            if (item.quantityReceived < remainingQuantity && !item.reasonCode) {
+              throw new HttpError(
+                400,
+                "reasonCode is required for a partial delivery",
+              );
+            }
+
+            if (
+              item.reasonCode !== undefined &&
+              item.reasonCode !== null &&
+              !RECEIVING_REASON_CODES.includes(item.reasonCode)
+            ) {
+              throw new HttpError(400, "Invalid reasonCode");
+            }
+
+            if (
+              item.actionStatus !== undefined &&
+              item.actionStatus !== null &&
+              !RECEIVING_ACTION_STATUSES.includes(item.actionStatus)
+            ) {
+              throw new HttpError(400, "Invalid actionStatus");
+            }
+          }
+
+          const receiving = await tx.receiving.create({
+            data: {
+              purchaseOrderId,
+              epCount,
+              items: {
+                create: items.map((item: any) => ({
+                  purchaseOrderItemId: item.purchaseOrderItemId,
+                  quantityReceived: item.quantityReceived,
+                  reasonCode: item.reasonCode ?? null,
+                  actionStatus: item.actionStatus ?? null,
+                })),
+              },
+            },
+            include: {
+              purchaseOrder: true,
+              items: true,
+            },
+          });
+
+          await updatePurchaseOrderStatus(tx, purchaseOrderId);
+
+          return { receiving, purchaseOrder, previouslyReceivedByItem };
         },
-      },
-      include: {
-        purchaseOrder: true,
-        items: true,
-      },
-    });
+        {
+          maxWait: 5000,
+          timeout: 10000,
+        },
+      );
 
     const response = {
       ...receiving,
@@ -720,12 +800,23 @@ app.post("/receivings", async (req, res) => {
       }),
     };
 
-    // ADD IT HERE
-    await updatePurchaseOrderStatus(purchaseOrderId);
-
     return res.status(201).json(response);
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof HttpError) {
+      return res.status(error.status).json({
+        error: error.message,
+      });
+    }
+
     console.error(error);
+
+    // P2028: the transaction could not start or timed out (e.g. waiting
+    // for the PO lock). It has been rolled back, so a retry is safe.
+    if (error.code === "P2028") {
+      return res.status(503).json({
+        error: "Receiving is busy, please try again",
+      });
+    }
 
     return res.status(500).json({
       error: "Failed to create receiving record",
@@ -742,32 +833,48 @@ app.post("/purchase-orders/:id/recalculate-status", async (req, res) => {
       });
     }
 
-    const purchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: {
-        id: purchaseOrderId,
+    // Lock the PO first so the recalculation can't interleave with a
+    // receiving transaction and write a stale status.
+    const status = await prisma.$transaction(
+      async (tx) => {
+        if (!(await lockPurchaseOrder(tx, purchaseOrderId))) {
+          throw new HttpError(404, "Purchase order not found");
+        }
+
+        await updatePurchaseOrderStatus(tx, purchaseOrderId);
+
+        const updatedPurchaseOrder = await tx.purchaseOrder.findUnique({
+          where: {
+            id: purchaseOrderId,
+          },
+        });
+
+        return updatedPurchaseOrder?.status;
       },
-    });
-
-    if (!purchaseOrder) {
-      return res.status(404).json({
-        error: "Purchase order not found",
-      });
-    }
-
-    await updatePurchaseOrderStatus(purchaseOrderId);
-
-    const updatedPurchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: {
-        id: purchaseOrderId,
+      {
+        maxWait: 5000,
+        timeout: 10000,
       },
-    });
+    );
 
     return res.status(200).json({
       message: "Purchase order status recalculated",
-      status: updatedPurchaseOrder?.status,
+      status,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof HttpError) {
+      return res.status(error.status).json({
+        error: error.message,
+      });
+    }
+
     console.error(error);
+
+    if (error.code === "P2028") {
+      return res.status(503).json({
+        error: "Purchase order is busy, please try again",
+      });
+    }
 
     return res.status(500).json({
       error: "Failed to recalculate purchase order status",
