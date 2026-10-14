@@ -478,6 +478,9 @@ const RECEIVING_ACTION_STATUSES = [
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = ["OPEN", "PARTIALLY_RECEIVED"];
 
+// Set deliberately; received quantities must not override them.
+const FIXED_PURCHASE_ORDER_STATUSES = ["DRAFT", "CANCELLED"];
+
 // Thrown inside a transaction to roll it back and return an HTTP error.
 class HttpError extends Error {
   status: number;
@@ -486,6 +489,20 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+// Locks the PO row until the transaction ends, so receivings and status
+// recalculations for the same PO run one at a time. Returns false if the
+// PO does not exist.
+async function lockPurchaseOrder(
+  db: Prisma.TransactionClient,
+  purchaseOrderId: number,
+) {
+  const lockedRows = await db.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "PurchaseOrder" WHERE id = ${purchaseOrderId} FOR UPDATE
+  `;
+
+  return lockedRows.length > 0;
 }
 
 async function updatePurchaseOrderStatus(
@@ -502,6 +519,10 @@ async function updatePurchaseOrderStatus(
   });
 
   if (!purchaseOrder) {
+    return;
+  }
+
+  if (FIXED_PURCHASE_ORDER_STATUSES.includes(purchaseOrder.status)) {
     return;
   }
 
@@ -586,11 +607,7 @@ app.post("/receivings", async (req, res) => {
         async (tx) => {
           // Lock the PO row so concurrent receivings for the same PO run
           // one at a time and always see each other's committed quantities.
-          const lockedRows = await tx.$queryRaw<{ id: number }[]>`
-            SELECT id FROM "PurchaseOrder" WHERE id = ${purchaseOrderId} FOR UPDATE
-          `;
-
-          if (lockedRows.length === 0) {
+          if (!(await lockPurchaseOrder(tx, purchaseOrderId))) {
             throw new HttpError(404, "Purchase order not found");
           }
 
@@ -816,32 +833,48 @@ app.post("/purchase-orders/:id/recalculate-status", async (req, res) => {
       });
     }
 
-    const purchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: {
-        id: purchaseOrderId,
+    // Lock the PO first so the recalculation can't interleave with a
+    // receiving transaction and write a stale status.
+    const status = await prisma.$transaction(
+      async (tx) => {
+        if (!(await lockPurchaseOrder(tx, purchaseOrderId))) {
+          throw new HttpError(404, "Purchase order not found");
+        }
+
+        await updatePurchaseOrderStatus(tx, purchaseOrderId);
+
+        const updatedPurchaseOrder = await tx.purchaseOrder.findUnique({
+          where: {
+            id: purchaseOrderId,
+          },
+        });
+
+        return updatedPurchaseOrder?.status;
       },
-    });
-
-    if (!purchaseOrder) {
-      return res.status(404).json({
-        error: "Purchase order not found",
-      });
-    }
-
-    await updatePurchaseOrderStatus(prisma, purchaseOrderId);
-
-    const updatedPurchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: {
-        id: purchaseOrderId,
+      {
+        maxWait: 5000,
+        timeout: 10000,
       },
-    });
+    );
 
     return res.status(200).json({
       message: "Purchase order status recalculated",
-      status: updatedPurchaseOrder?.status,
+      status,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof HttpError) {
+      return res.status(error.status).json({
+        error: error.message,
+      });
+    }
+
     console.error(error);
+
+    if (error.code === "P2028") {
+      return res.status(503).json({
+        error: "Purchase order is busy, please try again",
+      });
+    }
 
     return res.status(500).json({
       error: "Failed to recalculate purchase order status",
