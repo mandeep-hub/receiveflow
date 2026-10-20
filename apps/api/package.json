@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "node --import tsx --import ./test/guard.ts --test --test-concurrency=1 \"test/**/*.test.ts\""
   },
   "license": "MIT",
   "dependencies": {
