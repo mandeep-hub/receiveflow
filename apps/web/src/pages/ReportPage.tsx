@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { API_BASE_URL } from "@/api/config";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -51,7 +52,7 @@ function ReportPage() {
       setShowFullReport(false);
 
       const response = await fetch(
-        `http://localhost:3000/receivings/report?date=${date}`,
+        `${API_BASE_URL}/receivings/report?date=${date}`,
       );
 
       if (!response.ok) {
