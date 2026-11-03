@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { API_BASE_URL } from "@/api/config";
+import { apiFetch } from "@/api/client";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -51,9 +51,7 @@ function ReportPage() {
       setError("");
       setShowFullReport(false);
 
-      const response = await fetch(
-        `${API_BASE_URL}/receivings/report?date=${date}`,
-      );
+      const response = await apiFetch(`/receivings/report?date=${date}`);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);

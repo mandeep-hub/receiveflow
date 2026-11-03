@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { API_BASE_URL } from "@/api/config";
+import { apiFetch } from "@/api/client";
 import { createReceiving, ReceivingRequestError } from "@/api/receivings";
 import type { PurchaseOrder } from "@/types/purchaseOrder";
 
@@ -93,8 +93,8 @@ function closedPurchaseOrderText(
 // Fetch all purchase orders and the total already received per PO item.
 async function fetchReceivingData() {
   const [purchaseOrdersResponse, receivingsResponse] = await Promise.all([
-    fetch(`${API_BASE_URL}/purchase-orders`),
-    fetch(`${API_BASE_URL}/receivings`),
+    apiFetch("/purchase-orders"),
+    apiFetch("/receivings"),
   ]);
 
   if (!purchaseOrdersResponse.ok) {

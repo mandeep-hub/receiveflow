@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "@/api/config";
+import { apiFetch } from "@/api/client";
 
 export type CreateReceivingItem = {
   purchaseOrderItemId: number;
@@ -38,7 +38,8 @@ export async function createReceiving(data: CreateReceivingRequest) {
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE_URL}/receivings`, {
+    // apiFetch adds the session cookie and the CSRF token.
+    response = await apiFetch("/receivings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
