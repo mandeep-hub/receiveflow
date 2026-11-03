@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getPurchaseOrders } from "@/api/purchaseOrders";
+import { formatDate } from "@/lib/date";
 import type { PurchaseOrder } from "@/types/purchaseOrder";
 
 import {
@@ -53,14 +54,10 @@ function PurchaseOrdersPage() {
                 </TableCell>
                 <TableCell>{purchaseOrder.supplier.name}</TableCell>
 
-                <TableCell>
-                  {new Date(purchaseOrder.orderDate).toLocaleDateString()}
-                </TableCell>
+                <TableCell>{formatDate(purchaseOrder.orderDate)}</TableCell>
 
                 <TableCell>
-                  {new Date(
-                    purchaseOrder.expectedDeliveryDate,
-                  ).toLocaleDateString()}
+                  {formatDate(purchaseOrder.expectedDeliveryDate)}
                 </TableCell>
 
                 <TableCell>{purchaseOrder.status}</TableCell>

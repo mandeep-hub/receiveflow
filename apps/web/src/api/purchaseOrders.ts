@@ -1,5 +1,7 @@
+import { apiFetch } from "@/api/client";
+
 export async function getPurchaseOrders() {
-  const response = await fetch("http://localhost:3000/purchase-orders");
+  const response = await apiFetch("/purchase-orders");
 
   if (!response.ok) {
     throw new Error("Failed to fetch purchase orders");
@@ -9,8 +11,8 @@ export async function getPurchaseOrders() {
 }
 
 export async function getPurchaseOrderByNumber(poNumber: string) {
-  const response = await fetch(
-    `http://localhost:3000/purchase-orders?poNumber=${encodeURIComponent(poNumber)}`,
+  const response = await apiFetch(
+    `/purchase-orders?poNumber=${encodeURIComponent(poNumber)}`,
   );
 
   if (!response.ok) {
@@ -26,7 +28,7 @@ export async function getPurchaseOrderByNumber(poNumber: string) {
 }
 
 export async function getPurchaseOrder(id: number) {
-  const response = await fetch(`http://localhost:3000/purchase-orders/${id}`);
+  const response = await apiFetch(`/purchase-orders/${id}`);
 
   if (!response.ok) {
     throw new Error("Failed to fetch purchase order");

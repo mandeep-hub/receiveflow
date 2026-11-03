@@ -15,7 +15,7 @@ export type PurchaseOrder = {
   id: number;
   poNumber: string;
   orderDate: string;
-  expectedDeliveryDate: string;
+  expectedDeliveryDate: string | null;
   status: string;
   source: string;
   externalReference: string | null;
