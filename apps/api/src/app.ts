@@ -2,9 +2,23 @@ import express from "express";
 import cors from "cors";
 import prisma from "./lib/prisma.js";
 import type { Prisma } from "./generated/prisma/client.js";
+import { createAuth } from "./auth/index.js";
+import { loadAuthConfig } from "./auth/config.js";
+import { prismaAuthStore } from "./auth/store.js";
+
+const authConfig = loadAuthConfig();
+const auth = createAuth({ store: prismaAuthStore, config: authConfig });
+const requireAdmin = auth.requireRole("ADMIN");
+
 const app = express();
 
-app.use(cors());
+app.disable("x-powered-by");
+
+if (authConfig.trustProxyHops > 0) {
+  app.set("trust proxy", authConfig.trustProxyHops);
+}
+
+app.use(cors(auth.corsOptions));
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -20,13 +34,20 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Everything above is public. /auth/login is public too; every route after
+// this point needs a valid session (401 otherwise), and every state-changing
+// request also needs the session's CSRF token from the frontend origin (403).
+app.use(auth.router);
+app.use(auth.requireAuth);
+app.use(auth.requireCsrf);
+
 app.get("/suppliers", async (req, res) => {
   const suppliers = await prisma.supplier.findMany();
 
   res.json(suppliers);
 });
 
-app.post("/suppliers", async (req, res) => {
+app.post("/suppliers", requireAdmin, async (req, res) => {
   try {
     const { code, name } = req.body;
 
@@ -76,7 +97,7 @@ app.get("/suppliers/:id", async (req, res) => {
   res.json(supplier);
 });
 
-app.put("/suppliers/:id", async (req, res) => {
+app.put("/suppliers/:id", requireAdmin, async (req, res) => {
   const supplier = await prisma.supplier.findUnique({
     where: {
       id: Number(req.params.id),
@@ -101,7 +122,7 @@ app.put("/suppliers/:id", async (req, res) => {
 
   res.json(updatedSupplier);
 });
-app.delete("/suppliers/:id", async (req, res) => {
+app.delete("/suppliers/:id", requireAdmin, async (req, res) => {
   const supplier = await prisma.supplier.findUnique({
     where: {
       id: Number(req.params.id),
@@ -147,7 +168,7 @@ app.get("/products/:id", async (req, res) => {
   res.json(product);
 });
 
-app.post("/products", async (req, res) => {
+app.post("/products", requireAdmin, async (req, res) => {
   try {
     const { articleNumber, name } = req.body;
 
@@ -185,7 +206,7 @@ app.post("/products", async (req, res) => {
   }
 });
 
-app.put("/products/:id", async (req, res) => {
+app.put("/products/:id", requireAdmin, async (req, res) => {
   const product = await prisma.product.findUnique({
     where: {
       id: Number(req.params.id),
@@ -211,7 +232,7 @@ app.put("/products/:id", async (req, res) => {
   res.json(updatedProduct);
 });
 
-app.delete("/products/:id", async (req, res) => {
+app.delete("/products/:id", requireAdmin, async (req, res) => {
   const product = await prisma.product.findUnique({
     where: {
       id: Number(req.params.id),
@@ -238,7 +259,7 @@ app.delete("/products/:id", async (req, res) => {
 
 //Purchase order endpoint
 
-app.post("/purchase-orders", async (req, res) => {
+app.post("/purchase-orders", requireAdmin, async (req, res) => {
   try {
     const { poNumber, supplierId, orderDate, expectedDeliveryDate, items } =
       req.body;
@@ -823,7 +844,7 @@ app.post("/receivings", async (req, res) => {
     });
   }
 });
-app.post("/purchase-orders/:id/recalculate-status", async (req, res) => {
+app.post("/purchase-orders/:id/recalculate-status", requireAdmin, async (req, res) => {
   try {
     const purchaseOrderId = Number(req.params.id);
 

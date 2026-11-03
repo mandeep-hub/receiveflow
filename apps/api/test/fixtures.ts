@@ -7,6 +7,8 @@
 // count doesn't match, it throws, the transaction rolls back and nothing is
 // deleted.
 import { randomBytes } from "node:crypto";
+import { hashPassword } from "../src/auth/password.ts";
+import type { Role } from "../src/auth/types.ts";
 import type { getTestDatabase } from "./db.ts";
 
 export type TestDatabase = Awaited<ReturnType<typeof getTestDatabase>>;
@@ -19,12 +21,71 @@ export type TrackedRecords = {
   productIds: number[];
   purchaseOrderIds: number[];
   receivingIds: number[];
+  userIds: number[];
 };
 
 export function createTracker(): TrackedRecords {
   const tag = `TEST-RCV-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
 
-  return { tag, supplierIds: [], productIds: [], purchaseOrderIds: [], receivingIds: [] };
+  return { tag, supplierIds: [], productIds: [], purchaseOrderIds: [], receivingIds: [], userIds: [] };
+}
+
+// Test users have emails starting with this run's tag (lower-cased) on the
+// reserved .invalid domain, e.g. test-rcv-…-warehouse@example.invalid.
+function userEmailPrefix(tag: string) {
+  return `${tag.toLowerCase()}-`;
+}
+
+export function randomTestPassword() {
+  return `Test-${randomBytes(18).toString("base64url")}`;
+}
+
+export async function createTestUser(
+  db: TestDatabase,
+  tracker: TrackedRecords,
+  options: { label: string; role: Role; password: string; active?: boolean },
+) {
+  const user = await db.user.create({
+    data: {
+      email: `${userEmailPrefix(tracker.tag)}${options.label}@example.invalid`,
+      passwordHash: await hashPassword(options.password),
+      role: options.role,
+      active: options.active ?? true,
+    },
+  });
+  tracker.userIds.push(user.id);
+
+  return { id: user.id, email: user.email, password: options.password };
+}
+
+// Logs in through the API and returns what an authenticated request needs.
+export async function loginAs(baseUrl: string, user: { email: string; password: string }) {
+  const response = await fetch(`${baseUrl}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: user.email, password: user.password }),
+  });
+
+  if (response.status !== 200) {
+    throw new Error(`[test login] expected 200, got ${response.status}`);
+  }
+
+  const body = (await response.json()) as { csrfToken: string };
+  const cookie = response.headers.get("set-cookie")?.split(";")[0];
+
+  if (!cookie) {
+    throw new Error("[test login] no session cookie was set");
+  }
+
+  return { cookie, token: cookie.slice(cookie.indexOf("=") + 1), csrfToken: body.csrfToken };
+}
+
+export type TestSession = Awaited<ReturnType<typeof loginAs>>;
+
+// Headers for an authenticated request (the CSRF token matters only for
+// state-changing methods).
+export function authHeaders(session: TestSession): Record<string, string> {
+  return { Cookie: session.cookie, "X-CSRF-Token": session.csrfToken };
 }
 
 // Records a receiving the API created, so cleanup knows it belongs to this run.
@@ -101,20 +162,38 @@ function stop(reason: string): never {
 }
 
 export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRecords) {
-  const { tag, supplierIds, productIds, purchaseOrderIds, receivingIds } = tracker;
+  const { tag, supplierIds, productIds, purchaseOrderIds, receivingIds, userIds } = tracker;
 
   if (!TAG_PATTERN.test(tag)) {
     stop("the run tag has an unexpected format");
   }
 
   if (
-    supplierIds.length + productIds.length + purchaseOrderIds.length + receivingIds.length ===
+    supplierIds.length +
+      productIds.length +
+      purchaseOrderIds.length +
+      receivingIds.length +
+      userIds.length ===
     0
   ) {
     return { deleted: "nothing to clean up" };
   }
 
   return db.$transaction(async (tx) => {
+    // 0. Every tracked user must still exist and carry this run's tag. Their
+    //    sessions were all created by this run's logins.
+    const users = await tx.user.findMany({ where: { id: { in: userIds } } });
+    if (
+      users.length !== userIds.length ||
+      users.some(
+        (u) => !u.email.startsWith(userEmailPrefix(tag)) || !u.email.endsWith("@example.invalid"),
+      )
+    ) {
+      stop("a tracked user is missing or not tagged for this run");
+    }
+
+    const sessionCount = await tx.session.count({ where: { userId: { in: userIds } } });
+
     // 1. Every tracked row must still exist and carry this run's tag.
     const suppliers = await tx.supplier.findMany({ where: { id: { in: supplierIds } } });
     if (suppliers.length !== supplierIds.length || suppliers.some((s) => s.code !== tag)) {
@@ -228,6 +307,14 @@ export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRe
     });
     expectCount("suppliers", deletedSuppliers.count, supplierIds.length);
 
+    const deletedSessions = await tx.session.deleteMany({ where: { userId: { in: userIds } } });
+    expectCount("sessions", deletedSessions.count, sessionCount);
+
+    const deletedUsers = await tx.user.deleteMany({
+      where: { id: { in: userIds }, email: { startsWith: userEmailPrefix(tag) } },
+    });
+    expectCount("users", deletedUsers.count, userIds.length);
+
     return {
       deleted: {
         receivingItems: deletedReceivingItems.count,
@@ -236,6 +323,8 @@ export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRe
         purchaseOrders: deletedPurchaseOrders.count,
         products: deletedProducts.count,
         suppliers: deletedSuppliers.count,
+        sessions: deletedSessions.count,
+        users: deletedUsers.count,
       },
     };
   }, { timeout: 15_000 });

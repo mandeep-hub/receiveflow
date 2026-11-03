@@ -7,10 +7,13 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --import tsx --import ./test/guard.ts --test --test-concurrency=1 \"test/**/*.test.ts\""
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "test": "node --import tsx --import ./test/guard.ts --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "test:unit": "node --import tsx --test --test-concurrency=1 test/guard.test.ts \"test/unit/**/*.test.ts\""
   },
   "license": "MIT",
   "dependencies": {
+    "argon2": "0.45.1",
     "cors": "^2.8.6",
     "express": "^5.2.1"
   },

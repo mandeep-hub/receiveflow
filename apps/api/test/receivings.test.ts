@@ -6,20 +6,27 @@
 //   - the app is imported only after that, and its own Prisma client is
 //     verified separately, before any test record is created.
 // Every record is tagged with this run's tag and cleaned up by exact id.
+// Requests are made as a logged-in WAREHOUSE test user (session cookie and
+// CSRF token), as the frontend does.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { disconnectTestDatabase, getTestDatabase } from "./db.ts";
 import {
+  authHeaders,
   cleanupTrackedRecords,
   createProduct,
   createPurchaseOrder,
   createSupplier,
+  createTestUser,
   createTracker,
+  loginAs,
+  randomTestPassword,
   trackReceiving,
   type PurchaseOrderStatus,
   type TestDatabase,
+  type TestSession,
 } from "./fixtures.ts";
 
 const TEST_DATABASE_NAME = "receiveflow_test";
@@ -50,11 +57,23 @@ const INVALID_QUANTITIES = [
 ] as const;
 const invalidQuantityPos = new Map<string, TestPo>();
 let reasonPo: TestPo;
+let authPo: TestPo;
+let warehouseSession: TestSession;
 
-async function postReceiving(body: unknown) {
+// "session" (default): cookie and CSRF token; "no-csrf": cookie only;
+// "none": neither.
+async function postReceiving(body: unknown, auth: "session" | "no-csrf" | "none" = "session") {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  if (auth === "session") {
+    Object.assign(headers, authHeaders(warehouseSession));
+  } else if (auth === "no-csrf") {
+    headers.Cookie = warehouseSession.cookie;
+  }
+
   const response = await fetch(`${baseUrl}/receivings`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
   const result = { status: response.status, body: await response.json().catch(() => null) };
@@ -109,7 +128,15 @@ before(async () => {
   });
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  // 4. Test records, all tagged with this run's tag.
+  // 4. A tagged WAREHOUSE user, logged in through the API.
+  const warehouse = await createTestUser(db, tracker, {
+    label: "warehouse",
+    role: "WAREHOUSE",
+    password: randomTestPassword(),
+  });
+  warehouseSession = await loginAs(baseUrl, warehouse);
+
+  // 5. Test records, all tagged with this run's tag.
   const supplier = await createSupplier(db, tracker);
   const product = await createProduct(db, tracker);
   const shared = { supplierId: supplier.id, productId: product.id, quantityOrdered: 10 };
@@ -134,6 +161,7 @@ before(async () => {
   excessivePo = await createPurchaseOrder(db, tracker, { ...shared, suffix: "EXCESSIVE" });
   overPo = await createPurchaseOrder(db, tracker, { ...shared, suffix: "OVER" });
   reasonPo = await createPurchaseOrder(db, tracker, { ...shared, suffix: "REASON" });
+  authPo = await createPurchaseOrder(db, tracker, { ...shared, suffix: "AUTH" });
 });
 
 after(async () => {
@@ -348,4 +376,34 @@ test("a partial delivery without a reason code is refused with 400 and nothing i
     assert.deepEqual(response.body, { error: "reasonCode is required for a partial delivery" });
     await assertPurchaseOrderState(reasonPo, { status: "OPEN", receivings: 0, totalReceived: 0 });
   }
+});
+
+test("a receiving without a session is refused with 401 and nothing is saved", async () => {
+  const response = await postReceiving(
+    {
+      purchaseOrderId: authPo.id,
+      epCount: 1,
+      items: [{ purchaseOrderItemId: authPo.itemId, quantityReceived: 10 }],
+    },
+    "none",
+  );
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(response.body, { error: "Authentication required" });
+  await assertPurchaseOrderState(authPo, { status: "OPEN", receivings: 0, totalReceived: 0 });
+});
+
+test("a receiving with a session but no CSRF token is refused with 403 and nothing is saved", async () => {
+  const response = await postReceiving(
+    {
+      purchaseOrderId: authPo.id,
+      epCount: 1,
+      items: [{ purchaseOrderItemId: authPo.itemId, quantityReceived: 10 }],
+    },
+    "no-csrf",
+  );
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(response.body, { error: "Invalid or missing CSRF token" });
+  await assertPurchaseOrderState(authPo, { status: "OPEN", receivings: 0, totalReceived: 0 });
 });
