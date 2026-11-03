@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { BrowserRouter, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { ClipboardList, PackageCheck, FileText, Menu, X } from "lucide-react";
+import { ClipboardList, PackageCheck, FileText, Menu, Users, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { LogoutError } from "@/auth/logoutRequest";
+import { RequireAdmin } from "@/auth/RequireAdmin";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { useAuth } from "@/auth/useAuth";
 import LoginPage from "@/pages/LoginPage";
@@ -12,6 +13,8 @@ import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage";
 import PurchaseOrderDetailsPage from "@/pages/PurchaseOrderDetailsPage";
 import ReceivingPage from "@/pages/ReceivingPage";
 import ReportPage from "@/pages/ReportPage";
+import UserManagementPage from "@/pages/UserManagementPage";
+import { canManageUsers } from "@/users/userRules";
 
 function App() {
   return (
@@ -33,6 +36,14 @@ function App() {
             <Route path="/purchase-orders/:id" element={<PurchaseOrderDetailsPage />} />
             <Route path="/receiving" element={<ReceivingPage />} />
             <Route path="/reports" element={<ReportPage />} />
+            <Route
+              path="/users"
+              element={
+                <RequireAdmin>
+                  <UserManagementPage />
+                </RequireAdmin>
+              }
+            />
           </Route>
         </Routes>
       </AuthProvider>
@@ -145,6 +156,7 @@ type NavigationMenuProps = {
 
 function NavigationMenu({ closeMenu }: NavigationMenuProps) {
   const navigate = useNavigate();
+  const { state } = useAuth();
 
   function goTo(path: string) {
     navigate(path);
@@ -179,6 +191,17 @@ function NavigationMenu({ closeMenu }: NavigationMenuProps) {
         <FileText className="h-5 w-5" />
         <span>Reports</span>
       </button>
+
+      {state.status === "authenticated" && canManageUsers(state.user.role) && (
+        <button
+          type="button"
+          onClick={() => goTo("/users")}
+          className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium hover:bg-muted"
+        >
+          <Users className="h-5 w-5" />
+          <span>User Management</span>
+        </button>
+      )}
     </nav>
   );
 }
