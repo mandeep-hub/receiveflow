@@ -49,6 +49,11 @@ const ADMIN_ROUTES = [
   "DELETE /products/:id",
   "POST /purchase-orders",
   "POST /purchase-orders/:id/recalculate-status",
+  "GET /users",
+  "POST /users",
+  "POST /users/:id/reset-password",
+  "POST /users/:id/deactivate",
+  "POST /users/:id/reactivate",
 ];
 
 const SIGNED_IN_ROUTES = [

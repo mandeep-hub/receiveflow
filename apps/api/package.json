@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "create-admin": "tsx src/scripts/create-admin.ts",
+    "manage-users": "tsx src/scripts/manage-users.ts",
     "test": "node --import tsx --import ./test/guard.ts --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "test:unit": "node --import tsx --test --test-concurrency=1 test/guard.test.ts \"test/unit/**/*.test.ts\""
   },

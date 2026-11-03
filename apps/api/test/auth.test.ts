@@ -132,6 +132,11 @@ const PROTECTED_ROUTES: [string, string][] = [
   ["GET", "/receivings"],
   ["GET", "/receivings/report?date=2026-01-01"],
   ["GET", `/receivings/${MISSING_ID}`],
+  ["GET", "/users"],
+  ["POST", "/users"],
+  ["POST", `/users/${MISSING_ID}/reset-password`],
+  ["POST", `/users/${MISSING_ID}/deactivate`],
+  ["POST", `/users/${MISSING_ID}/reactivate`],
 ];
 
 test("public routes stay public", async () => {
@@ -176,6 +181,11 @@ test("WAREHOUSE gets 403 on every ADMIN route, even with valid input, and nothin
     ["DELETE", `/products/${MISSING_ID}`, undefined],
     ["POST", "/purchase-orders", { poNumber: code }],
     ["POST", `/purchase-orders/${MISSING_ID}/recalculate-status`, undefined],
+    ["GET", "/users", undefined],
+    ["POST", "/users", { email: `${code.toLowerCase()}@example.invalid`, password: "should-not-be-created" }],
+    ["POST", `/users/${MISSING_ID}/reset-password`, { password: "should-not-be-changed" }],
+    ["POST", `/users/${MISSING_ID}/deactivate`, undefined],
+    ["POST", `/users/${MISSING_ID}/reactivate`, undefined],
   ];
 
   for (const [method, path, body] of requests) {
@@ -186,6 +196,7 @@ test("WAREHOUSE gets 403 on every ADMIN route, even with valid input, and nothin
       if (path === "/suppliers") tracker.supplierIds.push(response.body.id);
       if (path === "/products") tracker.productIds.push(response.body.id);
       if (path === "/purchase-orders") tracker.purchaseOrderIds.push(response.body.id);
+      if (path === "/users") tracker.userIds.push(response.body.id);
     }
 
     assert.equal(response.status, 403, `${method} ${path}`);
@@ -195,6 +206,7 @@ test("WAREHOUSE gets 403 on every ADMIN route, even with valid input, and nothin
   assert.equal(await db!.supplier.count({ where: { code } }), 0);
   assert.equal(await db!.product.count({ where: { articleNumber: code } }), 0);
   assert.equal(await db!.purchaseOrder.count({ where: { poNumber: code } }), 0);
+  assert.equal(await db!.user.count({ where: { email: `${code.toLowerCase()}@example.invalid` } }), 0);
 });
 
 test("ADMIN passes the role check on every ADMIN route (validation or 404 answers next)", async () => {
@@ -207,6 +219,11 @@ test("ADMIN passes the role check on every ADMIN route (validation or 404 answer
     ["DELETE", `/products/${MISSING_ID}`, undefined, 404],
     ["POST", "/purchase-orders", {}, 400],
     ["POST", `/purchase-orders/${MISSING_ID}/recalculate-status`, undefined, 404],
+    ["GET", "/users", undefined, 200],
+    ["POST", "/users", {}, 400],
+    ["POST", `/users/${MISSING_ID}/reset-password`, { password: "Long-Enough-Password-1" }, 404],
+    ["POST", `/users/${MISSING_ID}/deactivate`, undefined, 404],
+    ["POST", `/users/${MISSING_ID}/reactivate`, undefined, 404],
   ];
 
   for (const [method, path, body, expected] of requests) {

@@ -5,6 +5,14 @@ import type { Prisma } from "./generated/prisma/client.js";
 import { createAuth } from "./auth/index.js";
 import { loadAuthConfig } from "./auth/config.js";
 import { prismaAuthStore } from "./auth/store.js";
+import {
+  createWarehouseUser,
+  deactivateUser,
+  listUsers,
+  reactivateUser,
+  resetUserPassword,
+  UserAdminError,
+} from "./auth/userAdmin.js";
 
 const authConfig = loadAuthConfig();
 const auth = createAuth({ store: prismaAuthStore, config: authConfig });
@@ -1153,6 +1161,93 @@ app.get("/receivings/:id", async (req, res) => {
     res.status(500).json({
       error: "Failed to fetch receiving record",
     });
+  }
+});
+
+//User management (ADMIN only)
+
+const USER_ADMIN_STATUS = { invalid: 400, "not-found": 404, conflict: 409, forbidden: 403 } as const;
+
+// Logs only an error code: a database error's message can quote the query,
+// and these queries can include a password hash.
+function sendUserAdminError(res: express.Response, error: unknown, message: string) {
+  if (error instanceof UserAdminError) {
+    const text = error.message.charAt(0).toUpperCase() + error.message.slice(1);
+    return res.status(USER_ADMIN_STATUS[error.kind]).json({ error: text });
+  }
+
+  console.error(`[users] ${message} (code ${(error as { code?: unknown } | null)?.code ?? "unknown"})`);
+
+  return res.status(500).json({ error: message });
+}
+
+// The email of the user named in the URL, or a refusal.
+async function emailFromUserId(idParam: string | string[]) {
+  const id = Number(idParam);
+
+  if (!Number.isInteger(id) || id <= 0 || id > 2_147_483_647) {
+    throw new UserAdminError("Invalid user id", "invalid");
+  }
+
+  const user = await prisma.user.findUnique({ where: { id }, select: { email: true } });
+
+  if (!user) {
+    throw new UserAdminError("User not found", "not-found");
+  }
+
+  return user.email;
+}
+
+app.get("/users", requireAdmin, async (req, res) => {
+  try {
+    res.json(await listUsers(prisma));
+  } catch (error) {
+    sendUserAdminError(res, error, "Failed to fetch users");
+  }
+});
+
+app.post("/users", requireAdmin, async (req, res) => {
+  try {
+    const { email, password } = (req.body ?? {}) as { email?: unknown; password?: unknown };
+
+    if (typeof email !== "string" || typeof password !== "string") {
+      throw new UserAdminError("Email and password are required", "invalid");
+    }
+
+    res.status(201).json(await createWarehouseUser(prisma, { email, password }));
+  } catch (error) {
+    sendUserAdminError(res, error, "Failed to create user");
+  }
+});
+
+app.post("/users/:id/reset-password", requireAdmin, async (req, res) => {
+  try {
+    const { password } = (req.body ?? {}) as { password?: unknown };
+
+    if (typeof password !== "string") {
+      throw new UserAdminError("Password is required", "invalid");
+    }
+
+    const email = await emailFromUserId(req.params.id);
+    res.json(await resetUserPassword(prisma, { email, password }));
+  } catch (error) {
+    sendUserAdminError(res, error, "Failed to reset password");
+  }
+});
+
+app.post("/users/:id/deactivate", requireAdmin, async (req, res) => {
+  try {
+    res.json(await deactivateUser(prisma, { email: await emailFromUserId(req.params.id) }));
+  } catch (error) {
+    sendUserAdminError(res, error, "Failed to deactivate user");
+  }
+});
+
+app.post("/users/:id/reactivate", requireAdmin, async (req, res) => {
+  try {
+    res.json(await reactivateUser(prisma, { email: await emailFromUserId(req.params.id) }));
+  } catch (error) {
+    sendUserAdminError(res, error, "Failed to reactivate user");
   }
 });
 
