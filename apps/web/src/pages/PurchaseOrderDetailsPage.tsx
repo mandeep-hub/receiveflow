@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getPurchaseOrder } from "@/api/purchaseOrders";
+import { formatDate } from "@/lib/date";
 import type { PurchaseOrder } from "@/types/purchaseOrder";
 import {
   Table,
@@ -54,14 +55,14 @@ function PurchaseOrderDetailsPage() {
         <div>
           <p className="text-sm text-muted-foreground">Order Date</p>
           <p className="mt-1 font-medium">
-            {new Date(purchaseOrder.orderDate).toLocaleDateString()}
+            {formatDate(purchaseOrder.orderDate)}
           </p>
         </div>
 
         <div>
           <p className="text-sm text-muted-foreground">Expected Delivery</p>
           <p className="mt-1 font-medium">
-            {new Date(purchaseOrder.expectedDeliveryDate).toLocaleDateString()}
+            {formatDate(purchaseOrder.expectedDeliveryDate)}
           </p>
         </div>
 
