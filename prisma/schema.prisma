@@ -21,6 +21,11 @@ enum PurchaseOrderSource {
   QLIK
 }
 
+enum UserRole {
+  ADMIN
+  WAREHOUSE
+}
+
 model Supplier {
   id     Int     @id @default(autoincrement())
   code   String  @unique
@@ -89,4 +94,35 @@ model ReceivingItem {
 
   purchaseOrderItemId Int
   purchaseOrderItem   PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  // Always stored trimmed and lower-cased. The migration enforces this with
+  // the CHECK constraint "User_email_lowercase" (email = lower(btrim(email))),
+  // which Prisma schema syntax cannot represent.
+  email        String   @unique
+  // Argon2id hash ("$argon2id$..."); the password itself is never stored.
+  passwordHash String
+  role         UserRole @default(WAREHOUSE)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions Session[]
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  // SHA-256 (hex) of the session cookie value; the cookie value is never stored.
+  tokenHash String   @unique
+  // Random per-session token the frontend sends in the X-CSRF-Token header.
+  csrfToken String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
 }
