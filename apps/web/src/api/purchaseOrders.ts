@@ -1,4 +1,7 @@
 import { apiFetch } from "@/api/client";
+import { createPurchaseOrderImportApi } from "@/purchaseOrders/importApi";
+
+export const purchaseOrderImportApi = createPurchaseOrderImportApi(apiFetch);
 
 export async function getPurchaseOrders() {
   const response = await apiFetch("/purchase-orders");
