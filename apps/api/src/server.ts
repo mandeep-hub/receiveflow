@@ -1,6 +1,13 @@
 import app from "./app.js";
-import { startServer } from "./startServer.js";
+import { parsePort, startServer } from "./startServer.js";
 
-const PORT = 3000;
+let port: number;
 
-startServer(app, PORT);
+try {
+  port = parsePort(process.env.PORT);
+} catch (error) {
+  console.error(`ReceiveFlow API failed to start: ${(error as Error).message}`);
+  process.exit(1);
+}
+
+startServer(app, port);
