@@ -13,6 +13,13 @@ import {
   resetUserPassword,
   UserAdminError,
 } from "./auth/userAdmin.js";
+import {
+  ImportConflictError,
+  importPurchaseOrders,
+  ImportRejectedError,
+  validatePurchaseOrderImport,
+} from "./purchaseOrders/excelImport.js";
+import { ImportRequestError } from "./purchaseOrders/importRows.js";
 
 const authConfig = loadAuthConfig();
 const auth = createAuth({ store: prismaAuthStore, config: authConfig });
@@ -27,6 +34,18 @@ if (authConfig.trustProxyHops > 0) {
 }
 
 app.use(cors(auth.corsOptions));
+// A full 500-row import is larger than the default 100 KB body limit. Must come
+// before the general parser, which then leaves the parsed body alone. A body it
+// can't read gets a fixed JSON reply, never the parser's message or a stack trace.
+const sendImportBodyError: express.ErrorRequestHandler = (error, _req, res, _next) => {
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({ error: "The request is too large to import" });
+  }
+
+  return res.status(400).json({ error: "The request could not be read as JSON" });
+};
+
+app.use("/purchase-orders/import", express.json({ limit: "256kb" }), sendImportBodyError);
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -417,6 +436,43 @@ app.post("/purchase-orders", requireAdmin, async (req, res) => {
 });
 
 //Get purchase order
+
+//Excel purchase order import (ADMIN only)
+
+// Logs only an error code: a database error's message can quote the query.
+function sendImportError(res: express.Response, error: unknown, message: string) {
+  if (error instanceof ImportRequestError) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  if (error instanceof ImportRejectedError) {
+    return res.status(422).json({ error: error.message, errors: error.errors });
+  }
+
+  if (error instanceof ImportConflictError) {
+    return res.status(409).json({ error: error.message });
+  }
+
+  console.error(`[purchase order import] ${message} (code ${(error as { code?: unknown } | null)?.code ?? "unknown"})`);
+
+  return res.status(500).json({ error: message });
+}
+
+app.post("/purchase-orders/import/validate", requireAdmin, async (req, res) => {
+  try {
+    res.json(await validatePurchaseOrderImport(prisma, req.body));
+  } catch (error) {
+    sendImportError(res, error, "Failed to validate purchase orders");
+  }
+});
+
+app.post("/purchase-orders/import", requireAdmin, async (req, res) => {
+  try {
+    res.status(201).json(await importPurchaseOrders(prisma, req.body));
+  } catch (error) {
+    sendImportError(res, error, "Failed to import purchase orders");
+  }
+});
 
 app.get("/purchase-orders", async (req, res) => {
   try {

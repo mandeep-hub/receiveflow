@@ -49,6 +49,8 @@ const ADMIN_ROUTES = [
   "DELETE /products/:id",
   "POST /purchase-orders",
   "POST /purchase-orders/:id/recalculate-status",
+  "POST /purchase-orders/import/validate",
+  "POST /purchase-orders/import",
   "GET /users",
   "POST /users",
   "POST /users/:id/reset-password",
@@ -165,4 +167,41 @@ test("CORS: only the frontend origin is approved, with credentials and the CSRF 
 
   const simpleForeign = await request(port, "/health", { headers: { Origin: "https://evil.example" } });
   assert.equal(simpleForeign.headers["access-control-allow-origin"], undefined);
+});
+
+test("only the import routes accept a large body; it is still refused without a session", async () => {
+  const body = { rows: "x".repeat(150 * 1024) };
+
+  for (const path of ["/purchase-orders/import", "/purchase-orders/import/validate"]) {
+    const accepted = await request(port, path, { method: "POST", body });
+    assert.equal(accepted.status, 401, `${path} reads 150 KB, then needs a session`);
+
+    const tooLarge = await request(port, path, { method: "POST", body: { rows: "x".repeat(300 * 1024) } });
+    assert.equal(tooLarge.status, 413, `${path} refuses 300 KB`);
+  }
+
+  assert.equal((await request(port, "/suppliers", { method: "POST", body })).status, 413, "other routes keep the default limit");
+});
+
+test("the import routes answer unreadable bodies with fixed JSON errors and no stack trace", async () => {
+  for (const path of ["/purchase-orders/import", "/purchase-orders/import/validate"]) {
+    const tooLarge = await request(port, path, { method: "POST", body: { rows: "x".repeat(300 * 1024) } });
+    const malformed = await request(port, path, { method: "POST", rawBody: '{"rows": [secret-value' });
+
+    assert.equal(tooLarge.status, 413, path);
+    assert.deepEqual(tooLarge.body, { error: "The request is too large to import" }, path);
+    assert.match(String(tooLarge.headers["content-type"]), /^application\/json/, path);
+
+    assert.equal(malformed.status, 400, path);
+    assert.deepEqual(malformed.body, { error: "The request could not be read as JSON" }, path);
+    assert.match(String(malformed.headers["content-type"]), /^application\/json/, path);
+    assert.doesNotMatch(malformed.text + tooLarge.text, /secret-value|node_modules|SyntaxError|\bat /, path);
+  }
+});
+
+test("other routes keep their existing response to an unreadable body", async () => {
+  const malformed = await request(port, "/suppliers", { method: "POST", rawBody: "{bad" });
+
+  assert.equal(malformed.status, 400);
+  assert.match(String(malformed.headers["content-type"]), /^text\/html/);
 });

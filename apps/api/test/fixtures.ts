@@ -95,18 +95,29 @@ export function trackReceiving(tracker: TrackedRecords, response: { status: numb
   }
 }
 
-export async function createSupplier(db: TestDatabase, tracker: TrackedRecords) {
+// `suffix` gives a run more than one supplier or product.
+export async function createSupplier(
+  db: TestDatabase,
+  tracker: TrackedRecords,
+  options: { suffix?: string; active?: boolean } = {},
+) {
+  const code = options.suffix ? `${tracker.tag}-${options.suffix}` : tracker.tag;
   const supplier = await db.supplier.create({
-    data: { code: tracker.tag, name: `${tracker.tag} Supplier` },
+    data: { code, name: `${code} Supplier`, active: options.active ?? true },
   });
   tracker.supplierIds.push(supplier.id);
 
   return supplier;
 }
 
-export async function createProduct(db: TestDatabase, tracker: TrackedRecords) {
+export async function createProduct(
+  db: TestDatabase,
+  tracker: TrackedRecords,
+  options: { suffix?: string; active?: boolean } = {},
+) {
+  const articleNumber = options.suffix ? `${tracker.tag}-${options.suffix}` : tracker.tag;
   const product = await db.product.create({
-    data: { articleNumber: tracker.tag, name: `${tracker.tag} Product` },
+    data: { articleNumber, name: `${articleNumber} Product`, active: options.active ?? true },
   });
   tracker.productIds.push(product.id);
 
@@ -168,6 +179,11 @@ export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRe
     stop("the run tag has an unexpected format");
   }
 
+  const isTagged = (value: string) => value === tag || value.startsWith(`${tag}-`);
+  const taggedWhere = (field: "code" | "articleNumber") => ({
+    OR: [{ [field]: tag }, { [field]: { startsWith: `${tag}-` } }],
+  });
+
   if (
     supplierIds.length +
       productIds.length +
@@ -196,12 +212,12 @@ export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRe
 
     // 1. Every tracked row must still exist and carry this run's tag.
     const suppliers = await tx.supplier.findMany({ where: { id: { in: supplierIds } } });
-    if (suppliers.length !== supplierIds.length || suppliers.some((s) => s.code !== tag)) {
+    if (suppliers.length !== supplierIds.length || suppliers.some((s) => !isTagged(s.code))) {
       stop("a tracked supplier is missing or not tagged for this run");
     }
 
     const products = await tx.product.findMany({ where: { id: { in: productIds } } });
-    if (products.length !== productIds.length || products.some((p) => p.articleNumber !== tag)) {
+    if (products.length !== productIds.length || products.some((p) => !isTagged(p.articleNumber))) {
       stop("a tracked product is missing or not tagged for this run");
     }
 
@@ -298,12 +314,12 @@ export async function cleanupTrackedRecords(db: TestDatabase, tracker: TrackedRe
     expectCount("purchase orders", deletedPurchaseOrders.count, purchaseOrderIds.length);
 
     const deletedProducts = await tx.product.deleteMany({
-      where: { id: { in: productIds }, articleNumber: tag },
+      where: { id: { in: productIds }, ...taggedWhere("articleNumber") },
     });
     expectCount("products", deletedProducts.count, productIds.length);
 
     const deletedSuppliers = await tx.supplier.deleteMany({
-      where: { id: { in: supplierIds }, code: tag },
+      where: { id: { in: supplierIds }, ...taggedWhere("code") },
     });
     expectCount("suppliers", deletedSuppliers.count, supplierIds.length);
 
